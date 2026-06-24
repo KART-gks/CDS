@@ -1,0 +1,247 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import numpy as np
+
+st.set_page_config(
+    page_title="CDS Flow Shop Scheduling",
+    page_icon="📊",
+    layout="wide"
+)
+
+st.title("📊 CDS (Campbell Dudek Smith) Scheduling")
+st.markdown("Flow Shop Scheduling dengan Metode CDS dan Gantt Chart")
+
+# --------------------------
+# Input Data
+# --------------------------
+jumlah_job = st.number_input(
+    "Jumlah Job",
+    min_value=2,
+    value=5,
+    step=1
+)
+
+jumlah_mesin = st.number_input(
+    "Jumlah Mesin",
+    min_value=2,
+    value=4,
+    step=1
+)
+
+st.subheader("Input Waktu Proses")
+
+data = {}
+
+for m in range(jumlah_mesin):
+    data[f"M{m+1}"] = [
+        st.number_input(
+            f"Job {j+1} - Mesin {m+1}",
+            min_value=0,
+            value=1,
+            key=f"{j}_{m}"
+        )
+        for j in range(jumlah_job)
+    ]
+
+df = pd.DataFrame(
+    data,
+    index=[f"J{j+1}" for j in range(jumlah_job)]
+)
+
+st.write("### Data Waktu Proses")
+st.dataframe(df)
+
+# --------------------------
+# Algoritma Johnson
+# --------------------------
+def johnson_rule(two_machine_df):
+
+    jobs = list(two_machine_df.index)
+
+    left = []
+    right = []
+
+    temp = two_machine_df.copy()
+
+    while len(temp) > 0:
+
+        min_val = temp.min().min()
+
+        row, col = np.where(temp == min_val)
+
+        job = temp.index[row[0]]
+
+        if col[0] == 0:
+            left.append(job)
+        else:
+            right.insert(0, job)
+
+        temp = temp.drop(job)
+
+    return left + right
+
+
+# --------------------------
+# Hitung Makespan
+# --------------------------
+def calculate_makespan(sequence, process_time):
+
+    n_job = len(sequence)
+    n_machine = process_time.shape[1]
+
+    completion = np.zeros((n_job, n_machine))
+
+    for i, job in enumerate(sequence):
+
+        job_idx = process_time.index.get_loc(job)
+
+        for m in range(n_machine):
+
+            p = process_time.iloc[job_idx, m]
+
+            if i == 0 and m == 0:
+                completion[i, m] = p
+
+            elif i == 0:
+                completion[i, m] = completion[i, m-1] + p
+
+            elif m == 0:
+                completion[i, m] = completion[i-1, m] + p
+
+            else:
+                completion[i, m] = max(
+                    completion[i-1, m],
+                    completion[i, m-1]
+                ) + p
+
+    return completion[-1, -1]
+
+
+# --------------------------
+# Jadwal Detail untuk Gantt
+# --------------------------
+def create_schedule(sequence, process_time):
+
+    n_job = len(sequence)
+    n_machine = process_time.shape[1]
+
+    completion = np.zeros((n_job, n_machine))
+
+    gantt_data = []
+
+    for i, job in enumerate(sequence):
+
+        job_idx = process_time.index.get_loc(job)
+
+        for m in range(n_machine):
+
+            p = process_time.iloc[job_idx, m]
+
+            if i == 0 and m == 0:
+                start = 0
+
+            elif i == 0:
+                start = completion[i, m-1]
+
+            elif m == 0:
+                start = completion[i-1, m]
+
+            else:
+                start = max(
+                    completion[i-1, m],
+                    completion[i, m-1]
+                )
+
+            finish = start + p
+
+            completion[i, m] = finish
+
+            gantt_data.append(
+                dict(
+                    Job=job,
+                    Machine=f"M{m+1}",
+                    Start=start,
+                    Finish=finish
+                )
+            )
+
+    return pd.DataFrame(gantt_data)
+
+
+# --------------------------
+# Metode CDS
+# --------------------------
+if st.button("Hitung CDS"):
+
+    kandidat = []
+
+    for k in range(1, jumlah_mesin):
+
+        pseudo1 = df.iloc[:, :k].sum(axis=1)
+        pseudo2 = df.iloc[:, k:].sum(axis=1)
+
+        pseudo_df = pd.DataFrame({
+            "M1": pseudo1,
+            "M2": pseudo2
+        })
+
+        sequence = johnson_rule(pseudo_df)
+
+        makespan = calculate_makespan(
+            sequence,
+            df
+        )
+
+        kandidat.append({
+            "Iterasi": k,
+            "Sequence": " → ".join(sequence),
+            "Makespan": makespan,
+            "Urutan": sequence
+        })
+
+    hasil = pd.DataFrame(kandidat)
+
+    st.subheader("Hasil Iterasi CDS")
+    st.dataframe(hasil)
+
+    terbaik = hasil.loc[
+        hasil["Makespan"].idxmin()
+    ]
+
+    st.success(
+        f"Urutan Terbaik: {terbaik['Sequence']} | Makespan = {terbaik['Makespan']}"
+    )
+
+    # --------------------------
+    # Gantt Chart
+    # --------------------------
+    gantt_df = create_schedule(
+        terbaik["Urutan"],
+        df
+    )
+
+    fig = px.timeline(
+        gantt_df,
+        x_start="Start",
+        x_end="Finish",
+        y="Machine",
+        color="Job",
+        text="Job"
+    )
+
+    fig.update_yaxes(
+        autorange="reversed"
+    )
+
+    fig.update_layout(
+        title="Gantt Chart Hasil CDS",
+        xaxis_title="Waktu",
+        yaxis_title="Mesin",
+        height=600
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
