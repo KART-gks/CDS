@@ -1,0 +1,4 @@
+st.write("Gantt Data")
+st.dataframe(gantt_df)
+
+st.write(gantt_df.dtypes)
